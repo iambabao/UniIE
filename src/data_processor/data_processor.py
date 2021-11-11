@@ -153,7 +153,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                 logger.info("golden node: {}".format(example.context[start:end]))
             for edge in example.edges:
                 head, tail = example.nodes[edge["head"]], example.nodes[edge["tail"]]
-                logger.info("golden edge: between {} and {}".format(head["text"], tail["text"]))
+                logger.info("golden edge: {} --> {}".format(head["text"], tail["text"]))
             for start in range(max_seq_length):
                 for end in range(max_seq_length):
                     if 0 < labels[start][end] <= num_node_types:

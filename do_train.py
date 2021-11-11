@@ -39,6 +39,7 @@ compute_metrics,
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
     'bert': BertClassifier,
+    'bert-u': BertClassifierU,
 }
 
 
@@ -128,7 +129,6 @@ def train(args, data_processor, model, tokenizer, role):
                 model.zero_grad()
                 global_step += 1
 
-                # Log metrics and save model checkpoint
                 if args.evaluate_during_training and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                     results = evaluate(args, data_processor, model, tokenizer, role="valid", prefix=str(global_step))
                     current_score, best_score = results["score"], max(best_score, results["score"])
@@ -439,6 +439,8 @@ def main():
     results = {}
     if args.do_eval:
         checkpoints = [args.output_dir]
+        if os.path.exists(os.path.join(args.output_dir, "checkpoint-best")):
+            checkpoints.append(os.path.join(args.output_dir, "checkpoint-best"))
         if args.eval_all_checkpoints:
             checkpoints = list(
                 os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + "/**/" + WEIGHTS_NAME, recursive=True))
@@ -446,7 +448,6 @@ def main():
             logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)  # Reduce model loading logs
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
-
         for checkpoint in checkpoints:
             global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
             try: int(global_step)

@@ -11,7 +11,7 @@
 import json
 import random
 import logging
-from collections import Counter
+from collections import defaultdict, Counter
 
 logger = logging.getLogger(__name__)
 
@@ -160,26 +160,28 @@ def generate_outputs(predicted, task_id, input_ids, length, tokenizer, id2task, 
         id2label = task2schema[task]["id2label"]
         num_node_types, num_edge_types = task2schema[task]["num_types"]
         nodes = []
-        start2node, end2node = {}, {}
+        start2nodes, end2nodes = defaultdict(list), defaultdict(list)
         for i in range(max_len):
             for j in range(i, max_len):
                 if 0 < flags[i][j] <= num_node_types:
                     node = {"text": tokenizer.decode(i_ids[i:j + 1]), "type": id2label[flags[i][j]][6:]}
                     nodes.append(node)
-                    start2node[i] = node
-                    end2node[j] = node
+                    start2nodes[i].append(node)
+                    end2nodes[j].append(node)
         start_edges, end_edges = [], []
         for i in range(max_len):
             for j in range(max_len):
                 if num_node_types < flags[i][j]:
-                    if i in start2node and j in start2node:
-                        start_edges.append(
-                            {"head": start2node[i], "tail": start2node[j], "type": id2label[flags[i][j]][6:]}
-                        )
-                    if i in end2node and j in end2node:
-                        end_edges.append(
-                            {"head": end2node[i], "tail": end2node[j], "type": id2label[flags[i][j]][6:]}
-                        )
+                    for node_i in start2nodes[i]:
+                        for node_j in start2nodes[j]:
+                            if node_i == node_j:
+                                continue
+                            start_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
+                    for node_i in end2nodes[i]:
+                        for node_j in end2nodes[j]:
+                            if node_i == node_j:
+                                continue
+                            end_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
         edges = [item for item in start_edges if item in end_edges]
         outputs.append({
             "predicted_nodes": nodes,
