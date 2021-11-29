@@ -46,13 +46,19 @@ class InputExample(object):
 
 
 class InputFeatures(object):
-    def __init__(self, guid, task_id, input_ids, attention_mask=None, token_type_ids=None, length=None, labels=None):
+    def __init__(
+            self, guid, task_id, input_ids,
+            attention_mask=None, token_type_ids=None, length=None,
+            start_labels=None, end_labels=None, labels=None,
+    ):
         self.guid = guid
         self.task_id = task_id
         self.input_ids = input_ids
         self.attention_mask = attention_mask
         self.token_type_ids = token_type_ids
         self.length = length[0]
+        self.start_labels = start_labels
+        self.end_labels = end_labels
         self.labels = labels
 
     def __repr__(self):
@@ -78,7 +84,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
 
         if example.trigger is not None:
             prefix = "{}: The trigger of event {} is {}".format(
-                example.task, example.trigger["type"], example.trigger["text"]
+                example.task, example.trigger['type'], example.trigger['text']
             )
         else:
             prefix = example.task
@@ -103,6 +109,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                     char2token.append(token_index + offset)
                     break
 
+        start_labels, end_labels = [0] * max_seq_length, [0] * max_seq_length
         labels = [[0] * max_seq_length for _ in range(max_seq_length)]
         for node in example.nodes:
             start, end = node["start"], node["end"]
@@ -110,6 +117,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                 logger.warning("({}) Node {} out of range and will be skipped.".format(ex_index, node))
                 continue
             start, end = char2token[start], char2token[end - 1]
+            start_labels[start], end_labels[end] = 1, 1
             if labels[start][end] == 0:
                 labels[start][end] = label2id["node: {}".format(node["type"])]
             else:
@@ -127,9 +135,18 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                 continue
             head_start, head_end = char2token[head_start], char2token[head_end - 1]
             tail_start, tail_end = char2token[tail_start], char2token[tail_end - 1]
+            if head_start <= tail_start:
+                reverse = False
+            else:
+                reverse = True
+                head_start, head_end, tail_start, tail_end = tail_start, tail_end, head_start, head_end
             if labels[head_start][tail_start] == 0 and labels[head_end][tail_end] == 0:
-                labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
-                labels[head_end][tail_end] = label2id["edge: {}".format(edge["type"])]
+                if not reverse:
+                    labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
+                    labels[head_end][tail_end] = label2id["edge: {}".format(edge["type"])]
+                else:
+                    labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
+                    labels[head_end][tail_end] = label2id["reverse edge: {}".format(edge["type"])]
             elif labels[head_start][tail_start] != 0:
                 logger.warning(
                     "({}) Edge conflict at ({}, {}) and will be skipped.".format(ex_index, head_start, tail_start)
@@ -138,6 +155,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                 logger.warning(
                     "({}) Edge conflict at ({}, {}) and will be skipped.".format(ex_index, head_end, tail_end)
                 )
+        encoded["start_labels"], encoded["end_labels"] = start_labels, end_labels
         encoded["labels"] = coo_matrix(labels).reshape(1, max_seq_length * max_seq_length)
 
         del encoded["offset_mapping"]
@@ -158,16 +176,22 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, task2id, t
                 for end in range(max_seq_length):
                     if 0 < labels[start][end] <= num_node_types:
                         logger.info("labeled node: {}".format(tokenizer.decode(encoded["input_ids"][start:end + 1])))
-                    # if labels[start][end] > num_node_types:
-                    #     logger.info("labeled edge: between {} and {}".format(
-                    #         tokenizer.decode(encoded["input_ids"][start]),
-                    #         tokenizer.decode(encoded["input_ids"][end]),
-                    #     ))
+                    elif labels[start][end] > num_node_types:
+                        if (labels[start][end] - num_node_types) % 2 == 1:
+                            logger.info("labeled edge: {} --> {}".format(
+                                tokenizer.decode(encoded["input_ids"][start]),
+                                tokenizer.decode(encoded["input_ids"][end]),
+                            ))
+                        else:
+                            logger.info("labeled edge: {} --> {}".format(
+                                tokenizer.decode(encoded["input_ids"][end]),
+                                tokenizer.decode(encoded["input_ids"][start]),
+                            ))
 
     return features
 
 
-class DataProcessor:
+class DataProcessorW:
     def __init__(
             self,
             model_type,
@@ -175,7 +199,7 @@ class DataProcessor:
             max_seq_length,
             tasks,
             data_dir="",
-            cache_dir="cache",
+            cache_dir="cache-w",
             overwrite_cache=False,
     ):
         self.model_type = model_type
@@ -201,6 +225,9 @@ class DataProcessor:
             num_node_types = len(id2label)
             for line in read_file(os.path.join(data_dir, task, 'schema_edge.txt')):
                 label = "edge: {}".format(line.strip())
+                id2label[len(id2label) + 1] = label
+                label2id[label] = len(label2id) + 1
+                label = "reverse edge: {}".format(line.strip())
                 id2label[len(id2label) + 1] = label
                 label2id[label] = len(label2id) + 1
             num_edge_types = len(id2label) - num_node_types
@@ -271,6 +298,8 @@ class DataProcessor:
         else:
             all_token_type_ids = torch.tensor([[0] * self.max_seq_length for _ in features], dtype=torch.long)
         all_length = torch.tensor([f.length for f in features], dtype=torch.long)
+        all_start_labels = torch.tensor([f.start_labels for f in features], dtype=torch.long)
+        all_end_labels = torch.tensor([f.end_labels for f in features], dtype=torch.long)
         all_labels = vstack([f.labels for f in features])
         all_labels = torch.sparse_coo_tensor(
             torch.tensor(np.vstack([all_labels.row, all_labels.col]), dtype=torch.long),
@@ -280,7 +309,8 @@ class DataProcessor:
         )
 
         dataset = TensorDataset(
-            all_task_id, all_input_ids, all_attention_mask, all_token_type_ids, all_length, all_labels,
+            all_task_id, all_input_ids, all_attention_mask, all_token_type_ids, all_length,
+            all_start_labels, all_end_labels, all_labels,
         )
 
         return dataset
@@ -292,7 +322,7 @@ def run_test():
 
     init_logger(logging.INFO)
     tokenizer = AutoTokenizer.from_pretrained('bert-base-cased', use_fast=True)
-    processor = DataProcessor(
+    processor = DataProcessorW(
         'bert',
         'bert-base-cased',
         max_seq_length=256,

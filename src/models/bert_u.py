@@ -26,19 +26,19 @@ class BertClassifierU(BertPreTrainedModel):
             nn.Linear(config.hidden_size, config.task_hidden_size),
             nn.LayerNorm(config.task_hidden_size),
             nn.GELU(),
-            nn.Dropout(config.hidden_dropout_prob),
+            nn.Dropout(config.hidden_dropout_prob * 4),
         )
         self.end_layer = nn.Sequential(
             nn.Linear(config.hidden_size, config.task_hidden_size),
             nn.LayerNorm(config.task_hidden_size),
             nn.GELU(),
-            nn.Dropout(config.hidden_dropout_prob),
+            nn.Dropout(config.hidden_dropout_prob * 4),
         )
         self.Us = nn.ParameterList([
             nn.Parameter(torch.Tensor(len(_) + 1, config.task_hidden_size + 1, config.task_hidden_size + 1))
             for _ in config.task2labels.values()
         ])  # add 1 for bias
-        self.loss_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
         self.loss_function = nn.CrossEntropyLoss()
 
         self.init_weights()
@@ -88,7 +88,7 @@ class BertClassifierU(BertPreTrainedModel):
             losses = [
                 self.loss_function(
                     self.loss_dropout(task_logits[b_id][position_mask[b_id]]), labels[b_id][position_mask[b_id]]
-                ) for b_id in range(len(task_logits))
+                ) for b_id in range(batch_size)
             ]
             loss = sum(losses) / len(losses)
             outputs = (loss,) + outputs

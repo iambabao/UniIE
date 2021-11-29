@@ -13,7 +13,7 @@ import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
 
-class BertClassifier(BertPreTrainedModel):
+class BertClassifierB(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -26,13 +26,13 @@ class BertClassifier(BertPreTrainedModel):
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size),
             nn.GELU(),
-            nn.Dropout(config.hidden_dropout_prob),
+            nn.Dropout(config.hidden_dropout_prob * 4),
         )
         self.end_layer = nn.Sequential(
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size),
             nn.GELU(),
-            nn.Dropout(config.hidden_dropout_prob),
+            nn.Dropout(config.hidden_dropout_prob * 4),
         )
         self.task_layers = nn.ModuleList([
             nn.Linear(2 * config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
@@ -40,7 +40,7 @@ class BertClassifier(BertPreTrainedModel):
         self.output_layers = nn.ModuleList([
             nn.Linear(config.task_hidden_size, len(_) + 1) for _ in config.task2labels.values()
         ])
-        self.loss_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
         self.loss_function = nn.CrossEntropyLoss()
 
         self.init_weights()
@@ -64,7 +64,7 @@ class BertClassifier(BertPreTrainedModel):
         position_mask = torch.logical_and(
             token_mask.unsqueeze(-1).expand(-1, -1, max_seq_length),
             token_mask.unsqueeze(-2).expand(-1, max_seq_length, -1),
-        )
+        ).triu()
 
         outputs = self.bert(
             input_ids,

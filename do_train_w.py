@@ -25,21 +25,20 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessorW as DataProcessor
 from src.models import *
 from src.utils import (
 init_logger,
 save_json,
 save_json_lines,
-generate_outputs,
+generate_outputs_w as generate_outputs,
 refine_outputs,
 compute_metrics,
 )
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
-    'bert': BertClassifier,
-    'bert-u': BertClassifierU,
+    'bert-w': BertClassifierW,
 }
 
 
@@ -104,6 +103,8 @@ def train(args, data_processor, model, tokenizer, role):
                 "input_ids": batch[1].to(args.device),
                 "attention_mask": batch[2].to(args.device),
                 "length": batch[4].to(args.device),
+                "start_labels": batch[-3].to(args.device),
+                "end_labels": batch[-2].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
@@ -198,6 +199,8 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "input_ids": batch[1].to(args.device),
                 "attention_mask": batch[2].to(args.device),
                 "length": batch[4].to(args.device),
+                "start_labels": batch[-3].to(args.device),
+                "end_labels": batch[-2].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
@@ -205,11 +208,15 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 inputs["token_type_ids"] = batch[3].to(args.device)
 
             outputs = model(**inputs)
-            logits = outputs[1]
+            logits, start_logits, end_logits = outputs[1], outputs[2], outputs[3]
             predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
+            predicted_start = torch.argmax(start_logits, dim=-1)
+            predicted_end = torch.argmax(end_logits, dim=-1)
 
             eval_outputs.extend(generate_outputs(
                 predicted.detach().cpu().numpy(),
+                predicted_start.detach().cpu().numpy(),
+                predicted_end.detach().cpu().numpy(),
                 inputs["task_id"].detach().cpu().numpy(),
                 inputs["input_ids"].detach().cpu().numpy(),
                 inputs["length"].detach().cpu().numpy(),

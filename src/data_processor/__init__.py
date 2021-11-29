@@ -9,3 +9,6 @@
 """
 
 from .data_processor import DataProcessor
+from .data_processor_v import DataProcessorV
+from .data_processor_w import DataProcessorW
+from .data_processor_x import DataProcessorX

@@ -25,13 +25,13 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessorX as DataProcessor
 from src.models import *
 from src.utils import (
 init_logger,
 save_json,
 save_json_lines,
-generate_outputs,
+generate_outputs_x as generate_outputs,
 refine_outputs,
 compute_metrics,
 )

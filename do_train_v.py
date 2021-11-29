@@ -25,21 +25,21 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessorV as DataProcessor
 from src.models import *
 from src.utils import (
 init_logger,
 save_json,
 save_json_lines,
-generate_outputs,
+generate_outputs_v as generate_outputs,
 refine_outputs,
 compute_metrics,
 )
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
-    'bert': BertClassifier,
-    'bert-u': BertClassifierU,
+    'bert-v': BertClassifierV,
+    'bert-b': BertClassifierB,
 }
 
 
