@@ -25,21 +25,21 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessorV as DataProcessor
+from src.data_processor import DataProcessorUni as DataProcessor
 from src.models import *
 from src.utils import (
 init_logger,
 save_json,
 save_json_lines,
-generate_outputs_v as generate_outputs,
+generate_outputs_uni_hard,
+generate_outputs_uni_soft,
 refine_outputs,
 compute_metrics,
 )
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
-    'bert-v': BertClassifierV,
-    'bert-b': BertClassifierB,
+    'bert-uni': BertClassifierUni,
 }
 
 
@@ -92,7 +92,7 @@ def train(args, data_processor, model, tokenizer, role):
     training_loss = 0.0
     early_stop_flag = 0
     current_score, best_score = 0.0, 0.0
-    set_seed(args.seed)  # Added here for reproductibility
+    set_seed(args.seed)
     model.zero_grad()
     for _ in range(int(args.num_train_epochs)):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
@@ -103,7 +103,8 @@ def train(args, data_processor, model, tokenizer, role):
                 "task_id": batch[0].to(args.device),
                 "input_ids": batch[1].to(args.device),
                 "attention_mask": batch[2].to(args.device),
-                "length": batch[4].to(args.device),
+                "token_mapping": batch[4].to(args.device),
+                "length": batch[5].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
@@ -197,7 +198,8 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "task_id": batch[0].to(args.device),
                 "input_ids": batch[1].to(args.device),
                 "attention_mask": batch[2].to(args.device),
-                "length": batch[4].to(args.device),
+                "token_mapping": batch[4].to(args.device),
+                "length": batch[5].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
@@ -206,17 +208,26 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
 
             outputs = model(**inputs)
             logits = outputs[1]
-            predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
 
-            eval_outputs.extend(generate_outputs(
+            # hard decoding
+            predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
+            eval_outputs.extend(generate_outputs_uni_hard(
                 predicted.detach().cpu().numpy(),
                 inputs["task_id"].detach().cpu().numpy(),
-                inputs["input_ids"].detach().cpu().numpy(),
                 inputs["length"].detach().cpu().numpy(),
-                tokenizer,
                 data_processor.id2task,
-                data_processor.task2schema
+                data_processor.task2schema,
             ))
+
+            # soft decoding
+            # scores = [torch.softmax(_, dim=-1).cpu().numpy() for _ in logits]
+            # eval_outputs.extend(generate_outputs_uni_soft(
+            #     scores,
+            #     inputs["task_id"].detach().cpu().numpy(),
+            #     inputs["length"].detach().cpu().numpy(),
+            #     data_processor.id2task,
+            #     data_processor.task2schema,
+            # ))
 
     eval_outputs = refine_outputs(examples, eval_outputs)
     eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))
@@ -271,6 +282,7 @@ def main():
         help="The maximum total input sequence length after WordPiece tokenization. Sequences "
         "longer than this will be truncated, and sequences shorter than this will be padded.",
     )
+    parser.add_argument("--max_num_tokens", default=128, type=int, help="The maximum total input tokens.")
     parser.add_argument(
         "--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model."
     )
@@ -359,10 +371,11 @@ def main():
     if args.do_train:
         args.output_dir = os.path.join(
                 args.output_dir,
-                "{}_{}_{}_{}_{:.1e}".format(
+                "{}_{}_{}_{}_{:03d}_{:.1e}".format(
                     args.model_type,
                     list(filter(None, args.model_name_or_path.split("/"))).pop(),
                     args.max_seq_length,
+                    "uncased" if args.do_lower_case else "cased",
                     args.task_hidden_size,
                     args.learning_rate,
                 ),
@@ -388,10 +401,11 @@ def main():
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
             args.log_dir,
-            "{}_{}_{}_{}_{:.1e}.txt".format(
+            "{}_{}_{}_{}_{:03d}_{:.1e}.txt".format(
                 args.model_type,
                 list(filter(None, args.model_name_or_path.split("/"))).pop(),
                 args.max_seq_length,
+                "uncased" if args.do_lower_case else "cased",
                 args.task_hidden_size,
                 args.learning_rate,
             ),
@@ -408,10 +422,12 @@ def main():
 
     # Load config, tokenizer and pretrained model
     data_processor = DataProcessor(
+        args.tasks,
         args.model_type,
         args.model_name_or_path,
         args.max_seq_length,
-        args.tasks,
+        args.max_num_tokens,
+        do_lower_case=args.do_lower_case,
         data_dir=args.data_dir,
         overwrite_cache=args.overwrite_cache,
     )
@@ -462,9 +478,13 @@ def main():
                 global_step = ""
 
             # Reload the model
-            logger.info("Reload model from {}".format(checkpoint))
-            model = MODEL_MAPPING[args.model_type].from_pretrained(checkpoint)
-            model.to(args.device)
+            try:
+                logger.info("Reload model from {}".format(checkpoint))
+                model = MODEL_MAPPING[args.model_type].from_pretrained(checkpoint)
+                model.to(args.device)
+            except OSError:
+                logger.warning("Model not found in {}".format(checkpoint))
+                continue
 
             # Evaluate
             result = evaluate(args, data_processor, model, tokenizer, role="test", prefix=global_step)

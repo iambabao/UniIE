@@ -12,6 +12,26 @@ import torch
 import torch.nn.functional as F
 
 
+def build_token_embedding(inputs, mapping):
+    """
+
+    :param inputs: (batch_size, max_seq_length, hidden_size)
+    :param mapping: (batch_size, max_num_tokens, 2)
+    :return:
+    """
+
+    reshape = list(mapping.shape[:-1]) + [inputs.shape[-1]]
+    start_index, end_index = mapping[..., 0], mapping[..., 1]
+
+    start_index = start_index.unsqueeze(-1).expand(*reshape)
+    start_feature = torch.gather(inputs, dim=1, index=start_index)
+
+    end_index = end_index.unsqueeze(-1).expand(*reshape)
+    end_feature = torch.gather(inputs, dim=1, index=end_index)
+
+    return (start_feature + end_feature) / 2.0
+
+
 def ce_loss(logits, labels, mask=None):
     """
 
