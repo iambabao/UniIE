@@ -43,7 +43,9 @@ MODEL_MAPPING = {
     "bert-plus": BertClassifierPlus,
     "variant-a": VariantA,
     "variant-a-plus": VariantAPlus,
+    "variant-b": VariantB,
     "variant-b-plus": VariantBPlus,
+    "variant-c": VariantC,
 }
 
 
