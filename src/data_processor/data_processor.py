@@ -293,8 +293,8 @@ class DataProcessor:
 
             counter[task] = (len(features), u, v, w)
 
-        for task, (num_samples, u, v, w) in counter.items():
-            logger.info("{}: {} samples, {} items, {} out of range, {} conflicts".format(task, num_samples, u, v, w))
+        for task, (x, u, v, w) in counter.items():
+            logger.info("{}: {} samples with {} items ({} out of range, {} conflicts)".format(task, x, u, v, w))
 
         return all_examples, self._create_tensor_dataset(all_features)
 

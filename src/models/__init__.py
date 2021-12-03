@@ -9,4 +9,5 @@
 """
 
 from .bert import BertClassifier
+from .bert_plus import BertClassifierPlus
 from .bert_uni import BertClassifierUni

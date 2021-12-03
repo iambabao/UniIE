@@ -32,6 +32,7 @@ init_logger,
 save_json,
 save_json_lines,
 generate_outputs,
+generate_outputs_plus,
 refine_outputs,
 compute_metrics,
 )
@@ -39,6 +40,7 @@ compute_metrics,
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
     'bert': BertClassifier,
+    'bert-plus': BertClassifierPlus,
 }
 
 
@@ -104,13 +106,15 @@ def train(args, data_processor, model, tokenizer, role):
                 "attention_mask": batch[2].to(args.device),
                 "token_mapping": batch[4].to(args.device),
                 "length": batch[5].to(args.device),
-                "start_labels": batch[-3].to(args.device),
-                "end_labels": batch[-2].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
             if args.model_type in ["bert", "xlnet", "albert"]:
                 inputs["token_type_ids"] = batch[3].to(args.device)
+            if "plus" in args.model_type:
+                inputs["start_labels"] = batch[-3].to(args.device)
+                inputs["end_labels"] = batch[-2].to(args.device)
+
 
             outputs = model(**inputs)
             loss = outputs[0]
@@ -201,29 +205,41 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
                 "attention_mask": batch[2].to(args.device),
                 "token_mapping": batch[4].to(args.device),
                 "length": batch[5].to(args.device),
-                "start_labels": batch[-3].to(args.device),
-                "end_labels": batch[-2].to(args.device),
                 "labels": batch[-1].to_dense().to(args.device),
             }
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
             if args.model_type in ["bert", "xlnet", "albert"]:
                 inputs["token_type_ids"] = batch[3].to(args.device)
+            if "plus" in args.model_type:
+                inputs["start_labels"] = batch[-3].to(args.device)
+                inputs["end_labels"] = batch[-2].to(args.device)
 
             outputs = model(**inputs)
-            logits, start_logits, end_logits = outputs[1], outputs[2], outputs[3]
 
-            predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
-            predicted_start = torch.argmax(start_logits, dim=-1)
-            predicted_end = torch.argmax(end_logits, dim=-1)
-            eval_outputs.extend(generate_outputs(
-                predicted.detach().cpu().numpy(),
-                predicted_start.detach().cpu().numpy(),
-                predicted_end.detach().cpu().numpy(),
-                inputs["task_id"].detach().cpu().numpy(),
-                inputs["length"].detach().cpu().numpy(),
-                data_processor.id2task,
-                data_processor.task2schema,
-            ))
+            if "plus" not in args.model_type:
+                logits = outputs[1]
+                predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
+                eval_outputs.extend(generate_outputs(
+                    predicted.detach().cpu().numpy(),
+                    inputs["task_id"].detach().cpu().numpy(),
+                    inputs["length"].detach().cpu().numpy(),
+                    data_processor.id2task,
+                    data_processor.task2schema,
+                ))
+            else:
+                logits, start_logits, end_logits = outputs[1], outputs[2], outputs[3]
+                predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
+                predicted_start = torch.argmax(start_logits, dim=-1)
+                predicted_end = torch.argmax(end_logits, dim=-1)
+                eval_outputs.extend(generate_outputs_plus(
+                    predicted.detach().cpu().numpy(),
+                    predicted_start.detach().cpu().numpy(),
+                    predicted_end.detach().cpu().numpy(),
+                    inputs["task_id"].detach().cpu().numpy(),
+                    inputs["length"].detach().cpu().numpy(),
+                    data_processor.id2task,
+                    data_processor.task2schema,
+                ))
 
     eval_outputs = refine_outputs(examples, eval_outputs)
     eval_outputs_file = os.path.join(output_dir, "{}_outputs.json".format(role))

@@ -154,7 +154,48 @@ def make_batch_iter(data, batch_size, shuffle):
 
 
 # ====================
-def generate_outputs(predicted, predicted_start, predicted_end, task_id, length, id2task, task2schema):
+def generate_outputs(predicted, task_id, length, id2task, task2schema):
+    outputs = []
+    for flags, t_id, max_len in zip(predicted, task_id, length):
+        task = id2task[t_id]
+        id2label = task2schema[task]["id2label"]
+        num_node_types, num_edge_types = task2schema[task]["num_types"]
+
+        nodes = []
+        start2nodes, end2nodes = defaultdict(list), defaultdict(list)
+        for i in range(max_len):
+            for j in range(i, max_len):
+                if 0 < flags[i][j] <= num_node_types:
+                    node = {"start": i, "end": j + 1, "type": id2label[flags[i][j]][6:]}
+                    nodes.append(node)
+                    start2nodes[i].append(node)
+                    end2nodes[j].append(node)
+        start_edges, end_edges = [], []
+        for i in range(max_len):
+            for j in range(i, max_len):
+                if num_node_types < flags[i][j]:
+                    for node_i in start2nodes[i]:
+                        for node_j in start2nodes[j]:
+                            if node_i == node_j:
+                                continue
+                            if (flags[i][j] - num_node_types) % 2 == 1:
+                                start_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
+                            else:  # reverse edges
+                                start_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
+                    for node_i in end2nodes[i]:
+                        for node_j in end2nodes[j]:
+                            if node_i == node_j:
+                                continue
+                            if (flags[i][j] - num_node_types) % 2 == 1:
+                                end_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
+                            else:
+                                end_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
+        edges = [item for item in start_edges if item in end_edges]
+        outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
+    return outputs
+
+
+def generate_outputs_plus(predicted, predicted_start, predicted_end, task_id, length, id2task, task2schema):
     outputs = []
     for flags, s_flags, e_flags, t_id, max_len in zip(predicted, predicted_start, predicted_end, task_id, length):
         task = id2task[t_id]
