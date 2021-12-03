@@ -39,8 +39,11 @@ compute_metrics,
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
-    'bert': BertClassifier,
-    'bert-plus': BertClassifierPlus,
+    "bert": BertClassifier,
+    "bert-plus": BertClassifierPlus,
+    "variant-a": VariantA,
+    "variant-a-plus": VariantAPlus,
+    "variant-b-plus": VariantBPlus,
 }
 
 

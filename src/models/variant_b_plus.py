@@ -12,10 +12,10 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
-from src.models.utils import build_token_embedding, merge_by_select
+from src.models.utils import build_token_embedding, attentive_select
 
 
-class BertClassifierPlus(BertPreTrainedModel):
+class VariantBPlus(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -24,28 +24,40 @@ class BertClassifierPlus(BertPreTrainedModel):
         self.task_hidden_size = config.task_hidden_size
 
         self.bert = BertModel(config)
-        self.start_layer = nn.Sequential(
-            nn.Linear(config.hidden_size, config.task_hidden_size),
-            nn.LayerNorm(config.task_hidden_size),
+        self.unified_start_layer = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size),
+            nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
-        self.end_layer = nn.Sequential(
-            nn.Linear(config.hidden_size, config.task_hidden_size),
-            nn.LayerNorm(config.task_hidden_size),
+        self.unified_end_layer = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size),
+            nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
-        self.start_output_layer = nn.Linear(config.task_hidden_size, 2)
-        self.end_output_layer = nn.Linear(config.task_hidden_size, 2)
-        self.task_layers = nn.ModuleList([
-            nn.Linear(2 * config.task_hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        self.task_start_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
         ])
-        self.output_layers = nn.ModuleList([
-            nn.Linear(config.task_hidden_size, len(_) + 1) for _ in config.task2labels.values()
+        self.task_end_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        ])
+        self.start_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
+        self.end_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
+        self.output_start_layer = nn.Linear(config.task_hidden_size, 2)
+        self.output_end_layer = nn.Linear(config.task_hidden_size, 2)
+        self.Us = nn.ParameterList([
+            nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size, len(_) + 1))
+            for _ in config.task2labels.values()
         ])
         self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
         self.loss_function = nn.CrossEntropyLoss()
+
+        # initialize manually added parameters
+        nn.init.xavier_normal_(self.start_u)
+        nn.init.xavier_normal_(self.end_u)
+        for _ in self.Us:
+            nn.init.xavier_normal_(_)
 
         # initialize with HuggingFace API
         self.init_weights()
@@ -85,28 +97,21 @@ class BertClassifierPlus(BertPreTrainedModel):
         # (batch_size, max_num_tokens, hidden_size)
         token_embeddings = build_token_embedding(sequence_output, token_mapping)
 
-        start_output = self.start_layer(token_embeddings)
-        end_output = self.end_layer(token_embeddings)
+        start_embeddings = self.unified_start_layer(token_embeddings)
+        start_embeddings = torch.stack([layer(start_embeddings) for layer in self.task_start_layers], dim=1)
+        start_embeddings = attentive_select(start_embeddings, self.start_u, task_id)
 
-        start_logits = self.start_output_layer(start_output)
-        end_logits = self.end_output_layer(end_output)
-        outputs = (start_logits, end_logits) + outputs
+        end_embeddings = self.unified_end_layer(token_embeddings)
+        end_embeddings = torch.stack([layer(end_embeddings) for layer in self.task_end_layers], dim=1)
+        end_embeddings = attentive_select(end_embeddings, self.end_u, task_id)
 
-        start_expanded = start_output.unsqueeze(2).expand(-1, -1, max_num_tokens, -1)
-        end_expanded = end_output.unsqueeze(1).expand(-1, max_num_tokens, -1, -1)
-        unified_matrix = torch.cat([start_expanded, end_expanded], dim=-1)
-
-        # construct task cube
-        # (batch_size, num_tasks, max_num_tokens, max_num_tokens, task_hidden_size)
-        task_cube = torch.stack([task_layer(unified_matrix) for task_layer in self.task_layers], dim=1)
-
-        # construct task matrix
-        # (batch_size, max_num_tokens, max_num_tokens, task_hidden_size)
-        task_matrix = merge_by_select(task_cube, task_id)
-
-        # batch_size * (max_num_tokens, max_num_tokens, num_labels)
-        task_logits = [self.output_layers[t_id](task_matrix[b_id]) for b_id, t_id in enumerate(task_id)]
-        outputs = (task_logits,) + outputs
+        start_logits = self.output_start_layer(start_embeddings)
+        end_logits = self.output_end_layer(end_embeddings)
+        task_logits = [
+            torch.einsum("im,mnk,jn->ijk", start_embeddings[b_id], self.Us[t_id], end_embeddings[b_id])
+            for b_id, t_id in enumerate(task_id)
+        ]
+        outputs = (task_logits, start_logits, end_logits) + outputs
 
         if labels is not None:
             labels = labels.reshape(-1, max_num_tokens, max_num_tokens)

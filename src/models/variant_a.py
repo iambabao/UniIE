@@ -12,10 +12,10 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
-from src.models.utils import build_token_embedding
+from src.models.utils import build_token_embedding, index_select
 
 
-class BertClassifierUni(BertPreTrainedModel):
+class VariantA(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -24,20 +24,26 @@ class BertClassifierUni(BertPreTrainedModel):
         self.task_hidden_size = config.task_hidden_size
 
         self.bert = BertModel(config)
-        self.start_layer = nn.Sequential(
-            nn.Linear(config.hidden_size, config.task_hidden_size),
-            nn.LayerNorm(config.task_hidden_size),
+        self.unified_start_layer = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size),
+            nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
-        self.end_layer = nn.Sequential(
-            nn.Linear(config.hidden_size, config.task_hidden_size),
-            nn.LayerNorm(config.task_hidden_size),
+        self.unified_end_layer = nn.Sequential(
+            nn.Linear(config.hidden_size, config.hidden_size),
+            nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
+        self.task_start_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        ])
+        self.task_end_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        ])
         self.Us = nn.ParameterList([
-            nn.Parameter(torch.Tensor(len(_) + 1, config.task_hidden_size + 1, config.task_hidden_size + 1))
+            nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size, len(_) + 1))
             for _ in config.task2labels.values()
         ])
         self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
@@ -70,7 +76,7 @@ class BertClassifierUni(BertPreTrainedModel):
         position_mask = torch.logical_and(
             token_mask.unsqueeze(-1).expand(-1, -1, max_num_tokens),
             token_mask.unsqueeze(-2).expand(-1, max_num_tokens, -1),
-        )
+        ).triu()
 
         outputs = self.bert(
             input_ids,
@@ -83,13 +89,16 @@ class BertClassifierUni(BertPreTrainedModel):
         # (batch_size, max_num_tokens, hidden_size)
         token_embeddings = build_token_embedding(sequence_output, token_mapping)
 
-        start_output = self.start_layer(token_embeddings)
-        start_output = torch.cat([start_output, torch.ones_like(start_output[..., :1])], dim=-1)
-        end_output = self.end_layer(token_embeddings)
-        end_output = torch.cat([end_output, torch.ones_like(end_output[..., :1])], dim=-1)
+        start_embeddings = self.unified_start_layer(token_embeddings)
+        start_embeddings = torch.stack([layer(start_embeddings) for layer in self.task_start_layers], dim=1)
+        start_embeddings = index_select(start_embeddings, task_id)
+
+        end_embeddings = self.unified_end_layer(token_embeddings)
+        end_embeddings = torch.stack([layer(end_embeddings) for layer in self.task_end_layers], dim=1)
+        end_embeddings = index_select(end_embeddings, task_id)
 
         task_logits = [
-            torch.einsum('xi,nij,yj->nxy', start_output[b_id], self.Us[t_id], end_output[b_id]).permute(1, 2, 0)
+            torch.einsum("im,mnk,jn->ijk", start_embeddings[b_id], self.Us[t_id], end_embeddings[b_id])
             for b_id, t_id in enumerate(task_id)
         ]
         outputs = (task_logits,) + outputs

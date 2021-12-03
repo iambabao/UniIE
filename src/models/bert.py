@@ -42,11 +42,11 @@ class BertClassifier(BertPreTrainedModel):
         self.output_layers = nn.ModuleList([
             nn.Linear(config.task_hidden_size, len(_) + 1) for _ in config.task2labels.values()
         ])
-        self.U = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
 
         self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
         self.loss_function = nn.CrossEntropyLoss()
 
+        # initialize with HuggingFace API
         self.init_weights()
 
     def forward(

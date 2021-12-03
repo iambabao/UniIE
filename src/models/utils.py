@@ -63,44 +63,34 @@ def merge_by_select(task_cube, task_id):
     return torch.stack(outputs, dim=0)
 
 
-def merge_by_attention(task_cube, u, length, task_id):
+def index_select(features, task_id):
     """
 
-    :param task_cube: (batch_size, num_tasks, max_num_tokens, max_num_tokens, task_hidden_size)
-    :param u: (task_hidden_size, task_hidden_size)
-    :param length: (batch_size,)
+    :param features: (batch_size, num_tasks, max_num_tokens, hidden_size)
     :param task_id: (batch_size,)
     :return:
     """
 
     outputs = []
-    for cube, max_length, t_id in zip(task_cube, length, task_id):
-        cube = cube[:, :max_length, :max_length, :]  # (num_tasks, max_length, max_length, task_hidden_size)
-        # TODO: mask unused cell
-        task_features = torch.mean(cube, dim=(1, 2))  # (num_tasks, task_hidden_size)
-        scores = torch.einsum("ik,kk,jk->ij", task_features, u, task_features)  # (num_tasks, num_tasks)
-        attention = torch.softmax(scores[t_id], dim=-1)  # (num_tasks,)
-        outputs.append(torch.sum(attention.view(-1, 1, 1, 1) * cube, dim=0))
+    for feature, t_id in zip(features, task_id):
+        outputs.append(feature[t_id])
     return torch.stack(outputs, dim=0)
 
 
-def linearized_merge_by_attention(task_cube, u, matrix_mask, length, task_id):
+def attentive_select(features, u, task_id):
     """
 
-    :param task_cube: (batch_size, num_tasks, X, hidden_size)
+    :param features: (batch_size, num_tasks, max_num_tokens, hidden_size)
     :param u: (hidden_size, hidden_size)
-    :param matrix_mask: (batch_size, X)
-    :param length: (batch_size,)
-    :param task_id: (batch_size)
+    :param task_id: (batch_size,)
     :return:
     """
 
     outputs = []
-    for cube, mask, max_length, t_id in zip(task_cube, matrix_mask, length, task_id):
-        # (i, k, m) (m, n) (j, k, n) --> (i, j, k)
-        scores = torch.einsum("ikm,mn,jkn->ijk", cube, u, cube)  # (num_tasks, num_tasks, X)
-        attention = torch.softmax(scores[t_id], dim=0)  # (num_tasks, X)
-        outputs.append(torch.sum(attention.unsqueeze(-1) * cube, dim=0))
+    for feature, t_id in zip(features, task_id):
+        scores = torch.einsum("ikm,mn,jkn->ijk", feature, u, feature)  # (num_tasks, num_tasks, max_num_tokens)
+        attention = torch.softmax(scores[t_id], dim=0)  # (num_tasks, max_num_tokens)
+        outputs.append(torch.sum(attention.unsqueeze(-1) * feature, dim=0))
     return torch.stack(outputs, dim=0)
 
 
