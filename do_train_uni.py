@@ -418,7 +418,7 @@ def main():
     set_seed(args.seed)
 
     # Parse tasks
-    args.tasks = args.tasks.split(",")
+    args.tasks = sorted(args.tasks.split(","))
 
     # Load config, tokenizer and pretrained model
     data_processor = DataProcessor(
@@ -452,6 +452,8 @@ def main():
 
     logger.info("Training/evaluation parameters %s", args)
     logger.info("Training/evaluation config %s", config)
+    for n, p in model.named_parameters():
+        logger.info("{} (size: {} requires_grad: {})".format(n, p.size(), p.requires_grad))
 
     # Training
     if args.do_train:
@@ -472,7 +474,7 @@ def main():
 
         logger.info("Evaluate the following checkpoints: %s", checkpoints)
         for checkpoint in checkpoints:
-            if os.path.split(checkpoint)[-1].startswith("checkpoint-"):
+            if checkpoint != args.output_dir and os.path.split(checkpoint)[-1].startswith("checkpoint-"):
                 global_step = checkpoint.split("-")[-1]
             else:
                 global_step = ""

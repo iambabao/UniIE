@@ -48,11 +48,11 @@ class InputExample(object):
 
 class InputFeatures(object):
     def __init__(
-            self, guid, task_id, input_ids, attention_mask=None, token_type_ids=None,
+            self, guid, task, input_ids, attention_mask=None, token_type_ids=None,
             token_mapping=None, length=None, start_labels=None, end_labels=None, labels=None,
     ):
         self.guid = guid
-        self.task_id = task_id
+        self.task = task
         self.input_ids = input_ids
         self.attention_mask = attention_mask
         self.token_type_ids = token_type_ids
@@ -75,15 +75,14 @@ class InputFeatures(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-def convert_examples_to_features(examples, tokenizer, max_seq_length, max_num_tokens, task2id, task2schema):
+def convert_examples_to_features(examples, tokenizer, max_seq_length, max_num_tokens, task2schema):
     counter = 0
     oor_counter = 0
     conflict_counter = 0
     features = []
     for (ex_index, example) in enumerate(tqdm(examples, desc="Converting Examples")):
-        task_id = task2id[example.task]
         label2id = task2schema[example.task]["label2id"]
-        encoded = {"guid": example.guid, "task_id": task_id}
+        encoded = {"guid": example.guid, "task": example.task}
 
         if example.trigger is not None:
             prefix = "The task is {} and the trigger of event {} is {}".format(
@@ -220,19 +219,19 @@ class DataProcessor:
         self.cache_dir = "{}_{}".format(cache_dir, "uncased" if do_lower_case else "cased")
         self.overwrite_cache = overwrite_cache
 
-        self.id2task = {}
         self.task2id = {}
+        self.id2task = {}
         self.task2schema = {}
-        for index, task in enumerate(tasks):
-            self.id2task[index] = task
-            self.task2id[task] = index
+        for task in tasks:
+            self.task2id[task] = len(self.task2id)
+            self.id2task[len(self.id2task)] = task
             id2label, label2id = {}, {}
-            for line in read_file(os.path.join(data_dir, task, 'schema_node.txt')):
+            for line in read_file(os.path.join(data_dir, task, "schema_node.txt")):
                 label = "node: {}".format(line.strip())
                 id2label[len(id2label) + 1] = label
                 label2id[label] = len(label2id) + 1
             num_node_types = len(id2label)
-            for line in read_file(os.path.join(data_dir, task, 'schema_edge.txt')):
+            for line in read_file(os.path.join(data_dir, task, "schema_edge.txt")):
                 label = "edge: {}".format(line.strip())
                 id2label[len(id2label) + 1] = label
                 label2id[label] = len(label2id) + 1
@@ -285,7 +284,7 @@ class DataProcessor:
                 features, u, v, w = torch.load(cached_features)
             else:
                 features, u, v, w = convert_examples_to_features(
-                    examples, tokenizer, self.max_seq_length, self.max_num_tokens, self.task2id, self.task2schema,
+                    examples, tokenizer, self.max_seq_length, self.max_num_tokens, self.task2schema,
                 )
                 logger.info("Saving features into cached file {}".format(cached_features))
                 torch.save((features, u, v, w), cached_features)
@@ -299,7 +298,7 @@ class DataProcessor:
         return all_examples, self._create_tensor_dataset(all_features)
 
     def _create_tensor_dataset(self, features):
-        all_task_id = torch.tensor([f.task_id for f in features], dtype=torch.long)
+        all_task_id = torch.tensor([self.task2id[f.task] for f in features], dtype=torch.long)
         all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
         all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
         # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
