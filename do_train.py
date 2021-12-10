@@ -46,6 +46,7 @@ MODEL_MAPPING = {
     "variant-b": VariantB,
     "variant-b-plus": VariantBPlus,
     "variant-c": VariantC,
+    "variant-c-plus": VariantCPlus,
     "variant-d": VariantD,
 }
 
