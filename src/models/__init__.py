@@ -19,3 +19,4 @@ from .variant_b_plus import VariantBPlus
 from .variant_c import VariantC
 from .variant_c_plus import VariantCPlus
 from .variant_d import VariantD
+from .variant_e import VariantE

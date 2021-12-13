@@ -48,6 +48,7 @@ MODEL_MAPPING = {
     "variant-c": VariantC,
     "variant-c-plus": VariantCPlus,
     "variant-d": VariantD,
+    "variant-e": VariantE,
 }
 
 
@@ -118,7 +119,7 @@ def train(args, data_processor, model, tokenizer, role):
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
             if args.model_type in ["bert", "xlnet", "albert"]:
                 inputs["token_type_ids"] = batch[3].to(args.device)
-            if "plus" in args.model_type or args.model_type in ["variant-c"]:
+            if "plus" in args.model_type or args.model_type in ["variant-c", "variant-e"]:
                 inputs["start_labels"] = batch[-3].to(args.device)
                 inputs["end_labels"] = batch[-2].to(args.device)
 
@@ -217,7 +218,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
             # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
             if args.model_type in ["bert", "xlnet", "albert"]:
                 inputs["token_type_ids"] = batch[3].to(args.device)
-            if "plus" in args.model_type or args.model_type in ["variant-c"]:
+            if "plus" in args.model_type or args.model_type in ["variant-c", "variant-e"]:
                 inputs["start_labels"] = batch[-3].to(args.device)
                 inputs["end_labels"] = batch[-2].to(args.device)
 
