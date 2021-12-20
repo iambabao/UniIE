@@ -36,7 +36,7 @@ def encode_data(data_dir, tasks, model_name_or_path, output_dir, no_cuda=False):
             filename = os.path.join(data_dir, task, 'data_{}.json'.format(role))
             for entry in tqdm(read_json_lines(filename), desc=task):
                 prefix = 'The task is {}'.format(task)
-                encoded = tokenizer.encode_plus((prefix, entry['context']), return_tensors='pt')
+                encoded = tokenizer.encode_plus(prefix, entry['context'], return_tensors='pt')
                 for key, value in encoded.items():
                     encoded[key] = value.to(device)
                 outputs = model(**encoded, return_dict=False)

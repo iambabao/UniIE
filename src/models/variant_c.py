@@ -15,7 +15,7 @@ from transformers import BertModel, BertPreTrainedModel
 from src.models.utils import build_token_embedding, attentive_select
 
 
-class VariantA(BertPreTrainedModel):
+class VariantC(BertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
@@ -24,6 +24,7 @@ class VariantA(BertPreTrainedModel):
         self.task_hidden_size = config.task_hidden_size
 
         self.bert = BertModel(config)
+        self.output_task_layer = nn.Linear(config.hidden_size, config.num_tasks)
         self.unified_start_layer = nn.Sequential(
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size),
@@ -91,10 +92,14 @@ class VariantA(BertPreTrainedModel):
             token_type_ids=token_type_ids,
             return_dict=False,
         )
+        # (batch_size, hidden_size)
+        pooled_output = outputs[1]
         # (batch_size, max_seq_length, hidden_size)
         sequence_output = outputs[0]
         # (batch_size, max_num_tokens, hidden_size)
         token_embeddings = build_token_embedding(sequence_output, token_mapping)
+
+        cls_logits = self.output_task_layer(pooled_output)
 
         start_embeddings = self.unified_start_layer(token_embeddings)
         start_embeddings = [layer(start_embeddings) for layer in self.task_start_layers]
@@ -117,6 +122,7 @@ class VariantA(BertPreTrainedModel):
         if labels is not None:
             labels = labels.reshape(-1, max_num_tokens, max_num_tokens)
 
+            cls_loss = self.loss_function(self.loss_dropout(cls_logits), task_id)
             start_loss = self.loss_function(self.loss_dropout(start_logits)[token_mask], start_labels[token_mask])
             end_loss = self.loss_function(self.loss_dropout(end_logits)[token_mask], end_labels[token_mask])
             losses = [
@@ -124,7 +130,7 @@ class VariantA(BertPreTrainedModel):
                     self.loss_dropout(task_logits[b_id][position_mask[b_id]]), labels[b_id][position_mask[b_id]]
                 ) for b_id in range(batch_size)
             ]
-            loss = sum(losses) / len(losses) + 0.5 * (start_loss + end_loss)
+            loss = sum(losses) / len(losses) + 0.5 * cls_loss + 0.5 * (start_loss + end_loss)
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, ...

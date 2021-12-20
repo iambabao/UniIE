@@ -66,6 +66,8 @@ class VariantB(BertPreTrainedModel):
         token_type_ids = batch_inputs.get("token_type_ids")
         token_mapping = batch_inputs.get("token_mapping")
         length = batch_inputs.get("length")
+        start_labels = batch_inputs.get("start_labels")
+        end_labels = batch_inputs.get("end_labels")
         labels = batch_inputs.get("labels")
 
         batch_size = token_mapping.shape[0]
@@ -101,6 +103,8 @@ class VariantB(BertPreTrainedModel):
         end_embeddings = torch.stack(end_embeddings, dim=1)
         end_embeddings = attentive_select(end_embeddings, self.end_u, task_id)
 
+        start_logits = self.output_start_layer(start_embeddings)
+        end_logits = self.output_end_layer(end_embeddings)
         task_logits = [
             torch.einsum("im,mnk,jn->ijk", start_embeddings[b_id], self.Us[t_id], end_embeddings[b_id])
             for b_id, t_id in enumerate(task_id)
@@ -110,12 +114,14 @@ class VariantB(BertPreTrainedModel):
         if labels is not None:
             labels = labels.reshape(-1, max_num_tokens, max_num_tokens)
 
+            start_loss = self.loss_function(self.loss_dropout(start_logits)[token_mask], start_labels[token_mask])
+            end_loss = self.loss_function(self.loss_dropout(end_logits)[token_mask], end_labels[token_mask])
             losses = [
                 self.loss_function(
                     self.loss_dropout(task_logits[b_id][position_mask[b_id]]), labels[b_id][position_mask[b_id]]
                 ) for b_id in range(batch_size)
             ]
-            loss = sum(losses) / len(losses)
+            loss = sum(losses) / len(losses) + 0.5 * (start_loss + end_loss)
             outputs = (loss,) + outputs
 
         return outputs  # (loss), logits, ...

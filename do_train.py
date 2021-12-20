@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
     "variant-a": VariantA,
     "variant-b": VariantB,
+    "variant-c": VariantC,
 }
 
 
