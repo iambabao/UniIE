@@ -162,172 +162,45 @@ def generate_outputs(predicted, task_id, length, id2task, task2schema):
         num_node_types, num_edge_types = task2schema[task]["num_types"]
 
         nodes = []
-        start2nodes, end2nodes = defaultdict(list), defaultdict(list)
         for i in range(max_len):
             for j in range(i, max_len):
-                if 0 < flags[i][j] <= num_node_types:
-                    node = {"start": i, "end": j + 1, "type": id2label[flags[i][j]][6:]}
+                predicted = flags[i][j]
+                if 0 < predicted <= num_node_types:
+                    node = {"start": i, "end": j + 1, "type": id2label[predicted][6:]}
                     nodes.append(node)
-                    start2nodes[i].append(node)
-                    end2nodes[j].append(node)
-        start_edges, end_edges = [], []
-        for i in range(max_len):
-            for j in range(i, max_len):
-                if num_node_types < flags[i][j]:
-                    for node_i in start2nodes[i]:
-                        for node_j in start2nodes[j]:
-                            if node_i == node_j:
-                                continue
-                            if (flags[i][j] - num_node_types) % 2 == 1:
-                                start_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
-                            else:  # reverse edges
-                                start_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
-                    for node_i in end2nodes[i]:
-                        for node_j in end2nodes[j]:
-                            if node_i == node_j:
-                                continue
-                            if (flags[i][j] - num_node_types) % 2 == 1:
-                                end_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
-                            else:
-                                end_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
-        edges = [item for item in start_edges if item in end_edges]
-        outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
-    return outputs
 
-
-def generate_outputs_plus(predicted, predicted_start, predicted_end, task_id, length, id2task, task2schema):
-    outputs = []
-    for flags, s_flags, e_flags, t_id, max_len in zip(predicted, predicted_start, predicted_end, task_id, length):
-        task = id2task[t_id]
-        id2label = task2schema[task]["id2label"]
-        num_node_types, num_edge_types = task2schema[task]["num_types"]
-
-        starts, ends = [], []
-        for index, (s, e) in enumerate(zip(s_flags, e_flags)):
-            if s: starts.append(index)
-            if e: ends.append(index)
-
-        nodes = []
-        start2nodes, end2nodes = defaultdict(list), defaultdict(list)
-        for i in range(max_len):
-            for j in range(i, max_len):
-                if i not in starts or j not in ends:
-                    continue
-                if 0 < flags[i][j] <= num_node_types:
-                    node = {"start": i, "end": j + 1, "type": id2label[flags[i][j]][6:]}
-                    nodes.append(node)
-                    start2nodes[i].append(node)
-                    end2nodes[j].append(node)
-        start_edges, end_edges = [], []
-        for i in range(max_len):
-            for j in range(i, max_len):
-                if num_node_types < flags[i][j]:
-                    for node_i in start2nodes[i]:
-                        for node_j in start2nodes[j]:
-                            if node_i == node_j:
-                                continue
-                            if (flags[i][j] - num_node_types) % 2 == 1:
-                                start_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
-                            else:  # reverse edges
-                                start_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
-                    for node_i in end2nodes[i]:
-                        for node_j in end2nodes[j]:
-                            if node_i == node_j:
-                                continue
-                            if (flags[i][j] - num_node_types) % 2 == 1:
-                                end_edges.append({"head": node_i, "tail": node_j, "type": id2label[flags[i][j]][6:]})
-                            else:
-                                end_edges.append({"head": node_j, "tail": node_i, "type": id2label[flags[i][j]][14:]})
-        edges = [item for item in start_edges if item in end_edges]
-        outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
-    return outputs
-
-
-def generate_outputs_uni_hard(predicted, task_id, length, id2task, task2schema):
-    outputs = []
-    for flags, t_id, max_length in zip(predicted, task_id, length):
-        task = id2task[t_id]
-        id2label = task2schema[task]["id2label"]
-        num_node_types, num_edge_types = task2schema[task]["num_types"]
-
-        nodes = []
-        i = 0
-        while i < max_length:
-            if 0 < flags[i][i] <= num_node_types:
-                j = i + 1
-                while j < max_length and flags[i][i] == flags[i][j]:
-                    j += 1
-                if np.all(flags[i:j,i:j] == flags[i][i]):
-                    node = {"start": i, "end": j, "type": id2label[flags[i][i]][6:]}
-                    nodes.append(node)
-                    i = j
-                else:
-                    i = i + 1
-            else:
-                i = i + 1
-
+        # TODO: single edge
         edges = []
         for head in nodes:
             for tail in nodes:
-                if head == tail:
-                    continue
-                h_start, h_end = head["start"], head["end"]
-                t_start, t_end = tail["start"], tail["end"]
-                if num_node_types < flags[h_start][t_start]:
-                    if np.all(flags[h_start:h_end, t_start:t_end] == flags[h_start][t_start]):
-                        edges.append({"head": head, "tail": tail, "type": id2label[flags[h_start][t_start]][6:]})
+                if head == tail: continue
+                head_start, tail_start = head["start"], tail["start"]
+                if head_start > tail_start: continue
 
-        outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
-    return outputs
+                predicted = flags[head_start][tail_start]
+                if num_node_types < predicted:
+                    if (predicted - num_node_types) % 2 == 1:
+                        edges.append({"head": head, "tail": tail, "type": id2label[predicted][6:]})
+                    else:  # reverse edges
+                        edges.append({"head": tail, "tail": head, "type": id2label[predicted][14:]})
 
+        # TODO:double edge
+        # edges = []
+        # for head in nodes:
+        #     for tail in nodes:
+        #         if head == tail: continue
+        #         head_start, head_end = head["start"], head["end"]
+        #         tail_start, tail_end = tail["start"], tail["end"]
+        #         if head_start > tail_start: continue
+        #         if flags[head_start][tail_start] != flags[head_end - 1][tail_end - 1]: continue
+        #
+        #         predicted = flags[head_start][tail_start]
+        #         if num_node_types < predicted:
+        #             if (predicted - num_node_types) % 2 == 1:
+        #                 edges.append({"head": head, "tail": tail, "type": id2label[predicted][6:]})
+        #             else:  # reverse edges
+        #                 edges.append({"head": tail, "tail": head, "type": id2label[predicted][14:]})
 
-def generate_outputs_uni_soft(scores, task_id, length, id2task, task2schema):
-    outputs = []
-    for score, t_id, max_len in zip(scores, task_id, length):
-        task = id2task[t_id]
-        id2label = task2schema[task]["id2label"]
-        num_node_types, num_edge_types = task2schema[task]["num_types"]
-        entity_labels = np.array(range(1, num_node_types + 1), dtype=np.int32)
-        relation_labels = np.array(range(num_node_types + 1, num_node_types + num_edge_types + 1), dtype=np.int32)
-        threshold = task2schema[task].get("threshold", 1.0)  # TODO
-
-        joint_score = score[:max_len, :max_len, :]
-        joint_score[..., entity_labels] = \
-            (joint_score[..., entity_labels] + joint_score[..., entity_labels].transpose((1, 0, 2))) / 2
-
-        feature_score_row = joint_score.reshape(max_len, -1)
-        feature_score_col = joint_score.transpose((1, 0, 2)).reshape(max_len, -1)
-        positions = (
-            (
-                np.linalg.norm(feature_score_row[0:max_len - 1] - feature_score_row[1:max_len], axis=1) +
-                np.linalg.norm(feature_score_col[0:max_len - 1] - feature_score_col[1:max_len], axis=1)
-            ) / 2 > threshold
-        ).nonzero()[0]
-        if len(positions) > 0:
-            spans = [(0, positions[0].item() + 1), (positions[-1].item() + 1, max_len)] + \
-                    [(positions[_].item() + 1, positions[_ + 1].item() + 1) for _ in range(len(positions) - 1)]
-        else:
-            spans = [(0, max_len)]
-
-        nodes = []
-        for start, end in spans:
-            mean_score = np.mean(joint_score[start:end, start:end, :], axis=(0, 1))
-            if np.max(mean_score[entity_labels]) > mean_score[0]:
-                predicted_label = id2label[entity_labels[np.argmax(mean_score[entity_labels])]][6:]
-                node = {"start": start, "end": end, "type": predicted_label}
-                nodes.append(node)
-
-        edges = []
-        for head in nodes:
-            for tail in nodes:
-                if head == tail:
-                    continue
-                h_start, h_end = head["start"], head["end"]
-                t_start, t_end = tail["start"], tail["end"]
-                mean_score = np.mean(joint_score[h_start:h_end, t_start:t_end, :], axis=(0, 1))
-                if np.max(mean_score[relation_labels]) > mean_score[0]:
-                    predicted_label = id2label[relation_labels[np.argmax(mean_score[relation_labels])]][6:]
-                    edges.append({"head": head, "tail": tail, "type": predicted_label})
         outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
     return outputs
 

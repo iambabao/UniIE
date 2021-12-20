@@ -8,15 +8,5 @@
 @Last modified date : 2021/5/8
 """
 
-from .bert import BertClassifier
-from .bert_plus import BertClassifierPlus
-from .bert_uni import BertClassifierUni
-
 from .variant_a import VariantA
-from .variant_a_plus import VariantAPlus
 from .variant_b import VariantB
-from .variant_b_plus import VariantBPlus
-from .variant_c import VariantC
-from .variant_c_plus import VariantCPlus
-from .variant_d import VariantD
-from .variant_e import VariantE

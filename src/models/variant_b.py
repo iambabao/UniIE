@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
+from src.models.modules import DiffLinear
 from src.models.utils import build_token_embedding, attentive_select
 
 
@@ -36,14 +37,12 @@ class VariantB(BertPreTrainedModel):
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
-        self.task_start_layers = nn.ModuleList([
-            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
-        ])
-        self.task_end_layers = nn.ModuleList([
-            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
-        ])
+        self.diff_start_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
+        self.diff_end_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
         self.start_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
         self.end_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
+        self.output_start_layer = nn.Linear(config.task_hidden_size, 2)
+        self.output_end_layer = nn.Linear(config.task_hidden_size, 2)
         self.Us = nn.ParameterList([
             nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size, len(_) + 1))
             for _ in config.task2labels.values()
@@ -60,16 +59,15 @@ class VariantB(BertPreTrainedModel):
         # initialize with HuggingFace API
         self.init_weights()
 
-    def forward(
-            self,
-            task_id,
-            input_ids,
-            attention_mask=None,
-            token_type_ids=None,
-            token_mapping=None,
-            length=None,
-            labels=None,
-    ):
+    def forward(self, batch_inputs):
+        task_id = batch_inputs.get("task_id")
+        input_ids = batch_inputs.get("input_ids")
+        attention_mask = batch_inputs.get("attention_mask")
+        token_type_ids = batch_inputs.get("token_type_ids")
+        token_mapping = batch_inputs.get("token_mapping")
+        length = batch_inputs.get("length")
+        labels = batch_inputs.get("labels")
+
         batch_size = token_mapping.shape[0]
         max_num_tokens = token_mapping.shape[1]
         length_indexes = torch.arange(max_num_tokens).expand(batch_size, max_num_tokens).to(self.device)
@@ -94,11 +92,13 @@ class VariantB(BertPreTrainedModel):
         token_embeddings = build_token_embedding(sequence_output, token_mapping)
 
         start_embeddings = self.unified_start_layer(token_embeddings)
-        start_embeddings = torch.stack([layer(start_embeddings) for layer in self.task_start_layers], dim=1)
+        start_embeddings = [self.diff_start_layer(start_embeddings, _) for _ in range(self.num_tasks)]
+        start_embeddings = torch.stack(start_embeddings, dim=1)
         start_embeddings = attentive_select(start_embeddings, self.start_u, task_id)
 
         end_embeddings = self.unified_end_layer(token_embeddings)
-        end_embeddings = torch.stack([layer(end_embeddings) for layer in self.task_end_layers], dim=1)
+        end_embeddings = [self.diff_end_layer(end_embeddings, _) for _ in range(self.num_tasks)]
+        end_embeddings = torch.stack(end_embeddings, dim=1)
         end_embeddings = attentive_select(end_embeddings, self.end_u, task_id)
 
         task_logits = [

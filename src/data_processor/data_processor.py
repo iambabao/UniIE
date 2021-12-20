@@ -152,23 +152,29 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, max_num_to
             else:
                 reverse = True
                 head_start, head_end, tail_start, tail_end = tail_start, tail_end, head_start, head_end
-            if labels[head_start][tail_start] == 0 and labels[head_end - 1][tail_end - 1] == 0:
+            # TODO: single edge
+            if labels[head_start][tail_start] == 0:
                 if not reverse:
                     labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
-                    labels[head_end - 1][tail_end - 1] = label2id["edge: {}".format(edge["type"])]
                 else:
                     labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
-                    labels[head_end - 1][tail_end - 1] = label2id["reverse edge: {}".format(edge["type"])]
-            elif labels[head_start][tail_start] != 0:
-                conflict_counter += 1
-                logger.warning(
-                    "({}) Edge conflict at ({}, {}) and will be skipped.".format(ex_index, head_start, tail_start)
-                )
             else:
                 conflict_counter += 1
-                logger.warning(
-                    "({}) Edge conflict at ({}, {}) and will be skipped.".format(ex_index, head_end, tail_end)
-                )
+                logger.warning("({}) Edge {} conflict and will be skipped.".format(ex_index, edge))
+            # TODO: double edge
+            # if labels[head_start][tail_start] == 0 and labels[head_end - 1][tail_end - 1] == 0:
+            #     if not reverse:
+            #         labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
+            #         labels[head_end - 1][tail_end - 1] = label2id["edge: {}".format(edge["type"])]
+            #     else:
+            #         labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
+            #         labels[head_end - 1][tail_end - 1] = label2id["reverse edge: {}".format(edge["type"])]
+            # elif labels[head_start][tail_start] != 0:
+            #     conflict_counter += 1
+            #     logger.warning("({}) Edge {} conflict at start and will be skipped.".format(ex_index, edge))
+            # else:
+            #     conflict_counter += 1
+            #     logger.warning("({}) Edge {} conflict at end and will be skipped.".format(ex_index, edge))
 
         del encoded["offset_mapping"]
         encoded["token_mapping"] = token_mapping

@@ -1029,6 +1029,7 @@ def convert_data(task):
         save_json_lines(outputs, 'data/formatted/{}/data_{}.json'.format(task, role))
     save_file(sorted(node_schema), 'data/formatted/{}/schema_node.txt'.format(task))
     save_file(sorted(edge_schema), 'data/formatted/{}/schema_edge.txt'.format(task))
+    os.removedirs('data/temp/{}'.format(task))
 
 
 def main():
@@ -1047,8 +1048,6 @@ def main():
     process_nyt_re()
     process_ontonotes_ner()
     process_tacred_rc()
-
-    # os.removedirs('data/temp')
 
     convert_data('ace2005_trigger')
     convert_data('ace2005_argument')
