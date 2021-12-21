@@ -90,12 +90,11 @@ class VariantC(BertPreTrainedModel):
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
-            return_dict=False,
         )
         # (batch_size, hidden_size)
-        pooled_output = outputs[1]
+        pooled_output = outputs["pooler_output"]
         # (batch_size, max_seq_length, hidden_size)
-        sequence_output = outputs[0]
+        sequence_output = outputs["last_hidden_state"]
         # (batch_size, max_num_tokens, hidden_size)
         token_embeddings = build_token_embedding(sequence_output, token_mapping)
 
@@ -117,7 +116,14 @@ class VariantC(BertPreTrainedModel):
             torch.einsum("im,mnk,jn->ijk", start_embeddings[b_id], self.Us[t_id], end_embeddings[b_id])
             for b_id, t_id in enumerate(task_id)
         ]
-        outputs = (task_logits,) + outputs
+
+        outputs["position_mask"] = position_mask
+        outputs["token_embeddings"] = token_embeddings
+        outputs["start_embeddings"] = start_embeddings
+        outputs["end_embeddings"] = end_embeddings
+        outputs["start_logits"] = start_logits
+        outputs["end_logits"] = end_logits
+        outputs["task_logits"] = task_logits
 
         if labels is not None:
             labels = labels.reshape(-1, max_num_tokens, max_num_tokens)
@@ -131,6 +137,9 @@ class VariantC(BertPreTrainedModel):
                 ) for b_id in range(batch_size)
             ]
             loss = sum(losses) / len(losses) + 0.5 * cls_loss + 0.5 * (start_loss + end_loss)
-            outputs = (loss,) + outputs
+            outputs["cls_loss"] = cls_loss
+            outputs["start_loss"] = start_loss
+            outputs["end_loss"] = end_loss
+            outputs["loss"] = loss
 
         return outputs  # (loss), logits, ...

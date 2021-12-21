@@ -115,7 +115,7 @@ def train(args, data_processor, model, tokenizer, role):
                 inputs["token_type_ids"] = batch[3].to(args.device)
 
             outputs = model(inputs)
-            loss = outputs[0]
+            loss = outputs["loss"]
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
@@ -213,7 +213,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
 
             outputs = model(inputs)
 
-            logits = outputs[1]
+            logits = outputs["task_logits"]
             predicted = torch.stack([torch.argmax(_, dim=-1) for _ in logits], dim=0)
             eval_outputs.extend(generate_outputs(
                 predicted.detach().cpu().numpy(),

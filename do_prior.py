@@ -30,37 +30,42 @@ MODEL_MAPPING = {
 }
 
 
-def get_prior(args, data_processor, model, tokenizer, role):
+def pruning(outputs):
+    logits = outputs["task_logits"]
+    mask = outputs["position_mask"]
+
+    for u, v in zip(logits, mask):
+        yield torch.softmax(u[v], dim=-1).detach().cpu().tolist()
+
+
+def get_prior(args, data_processor, model, tokenizer):
     os.makedirs(args.output_dir, exist_ok=True)
 
     args.batch_size = args.per_device_batch_size * max(1, args.n_gpu)
-    examples, dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
+    examples, dataset = data_processor.load_and_cache_data(tokenizer, args.role, args.suffix)
     sampler = SequentialSampler(dataset)
     dataloader = DataLoader(dataset, sampler=sampler, batch_size=args.batch_size)
 
-    prior = []
-    for batch in tqdm(dataloader, desc="Running"):
-        model.eval()
-        with torch.no_grad():
-            inputs = {
-                "task_id": batch[0].to(args.device),
-                "input_ids": batch[1].to(args.device),
-                "attention_mask": batch[2].to(args.device),
-                "token_mapping": batch[4].to(args.device),
-                "length": batch[5].to(args.device),
-            }
-            # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
-            if args.model_type in ["bert", "xlnet", "albert"]:
-                inputs["token_type_ids"] = batch[3].to(args.device)
+    prior_file = "prior_{}_{}_{}.txt".format(args.role, args.max_seq_length, args.max_num_tokens)
+    with open(os.path.join(args.output_dir, prior_file), "w", encoding="utf-8") as fp:
+        for batch in tqdm(dataloader, desc="{}: {}".format(args.tasks, args.role)):
+            model.eval()
+            with torch.no_grad():
+                inputs = {
+                    "task_id": batch[0].to(args.device),
+                    "input_ids": batch[1].to(args.device),
+                    "attention_mask": batch[2].to(args.device),
+                    "token_mapping": batch[4].to(args.device),
+                    "length": batch[5].to(args.device),
+                }
+                # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
+                if args.model_type in ["bert", "xlnet", "albert"]:
+                    inputs["token_type_ids"] = batch[3].to(args.device)
 
-            outputs = model(inputs)
-            logits = outputs[1]
-            prior.extend(logits.detach().cpu().tolist())
+                outputs = model(inputs)
 
-    prior_file = os.path.join(args.output_dir, "prior_{}.bin".format(role))
-    torch.save(prior, prior_file)
-
-    return prior
+                for prior in pruning(outputs):
+                    print(prior, file=fp)
 
 
 def main():
@@ -123,9 +128,6 @@ def main():
 
     # Other parameters
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
-    parser.add_argument(
-        "--overwrite_cache", action="store_true", help="Overwrite the cached training and evaluation sets"
-    )
     args = parser.parse_args()
 
     # Setup CUDA, GPU training
@@ -146,7 +148,6 @@ def main():
         args.max_num_tokens,
         do_lower_case=args.do_lower_case,
         data_dir=args.data_dir,
-        overwrite_cache=args.overwrite_cache,
     )
     config = AutoConfig.from_pretrained(
         args.pretrained_model,
@@ -167,7 +168,7 @@ def main():
     logger.info("Parameters %s", args)
     logger.info("Config %s", config)
 
-    get_prior(args, data_processor, model, tokenizer, role=args.role)
+    get_prior(args, data_processor, model, tokenizer)
 
 
 if __name__ == "__main__":
