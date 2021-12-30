@@ -73,6 +73,7 @@ class VariantC(BertPreTrainedModel):
         start_labels = batch_inputs.get("start_labels")
         end_labels = batch_inputs.get("end_labels")
         labels = batch_inputs.get("labels")
+        prior = batch_inputs.get("prior")
 
         batch_size = token_mapping.shape[0]
         max_num_tokens = token_mapping.shape[1]
@@ -137,6 +138,15 @@ class VariantC(BertPreTrainedModel):
                 ) for b_id in range(batch_size)
             ]
             loss = sum(losses) / len(losses) + 0.5 * cls_loss + 0.5 * (start_loss + end_loss)
+            if prior is not None:
+                kd_function = nn.KLDivLoss(reduction="sum")
+                kd_losses = [
+                    kd_function(
+                        torch.log_softmax(task_logits[b_id][position_mask[b_id]], dim=-1), prior[b_id]
+                    ) for b_id in range(batch_size)
+                ]
+                loss = loss + sum(kd_losses) / len(kd_losses)
+                outputs["kd_loss"] = sum(kd_losses) / len(kd_losses)
             outputs["cls_loss"] = cls_loss
             outputs["start_loss"] = start_loss
             outputs["end_loss"] = end_loss

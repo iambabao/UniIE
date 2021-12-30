@@ -15,7 +15,7 @@ import torch
 import tensorflow as tf
 from tqdm import tqdm
 from tensorboard.plugins import projector
-from transformers import BertTokenizer, BertConfig, BertModel
+from transformers import AutoTokenizer, AutoConfig, AutoModel
 
 from src.utils import init_logger, read_json_lines, save_file
 
@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 def encode_data(data_dir, tasks, model_name_or_path, output_dir, no_cuda=False):
-    tokenizer = BertTokenizer.from_pretrained(model_name_or_path)
-    config = BertConfig.from_pretrained(model_name_or_path)
-    model = BertModel.from_pretrained(model_name_or_path, config=config)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    config = AutoConfig.from_pretrained(model_name_or_path)
+    model = AutoModel.from_pretrained(model_name_or_path, config=config)
     device = torch.device("cuda" if torch.cuda.is_available() and not no_cuda else "cpu")
     model.to(device)
 
@@ -39,8 +39,8 @@ def encode_data(data_dir, tasks, model_name_or_path, output_dir, no_cuda=False):
                 encoded = tokenizer.encode_plus(prefix, entry['context'], return_tensors='pt')
                 for key, value in encoded.items():
                     encoded[key] = value.to(device)
-                outputs = model(**encoded, return_dict=False)
-                embedding.append(outputs[1][0].detach().cpu().tolist())
+                outputs = model(**encoded)
+                embedding.append(outputs['pooler_output'][0].detach().cpu().tolist())
 
                 length = len(entry['tokens']) // 10
                 length = str(length) if length < 10 else '>10'
@@ -78,21 +78,35 @@ def main():
 
     tasks = ['conll04_re', 'ade_re', 'ace2005_re', 'conll03_ner', 'genia_ner']
 
-    encode_data(
-        'data/formatted',
-        tasks,
-        'bert-base-cased',
-        'data/temp/raw',
-    )
-    visualize('data/temp/raw')
+    # encode_data(
+    #     'data/formatted',
+    #     tasks,
+    #     'bert-base-cased',
+    #     'data/temp/raw',
+    # )
+    # visualize('data/temp/raw')
 
     encode_data(
         'data/formatted',
         tasks,
         'checkpoints/conll04_re,ade_re,ace2005_re,conll03_ner,genia_ner/1220/variant-a_bert-base-cased_256_cased_256_5.0e-05/checkpoint-best',
-        'data/temp/tuned',
+        'data/temp/tuned_a',
     )
-    visualize('data/temp/tuned')
+    visualize('data/temp/tuned_a')
+    encode_data(
+        'data/formatted',
+        tasks,
+        'checkpoints/conll04_re,ade_re,ace2005_re,conll03_ner,genia_ner/1220/variant-b_bert-base-cased_256_cased_256_5.0e-05/checkpoint-best',
+        'data/temp/tuned_b',
+    )
+    visualize('data/temp/tuned_b')
+    encode_data(
+        'data/formatted',
+        tasks,
+        'checkpoints/conll04_re,ade_re,ace2005_re,conll03_ner,genia_ner/1220/variant-c_bert-base-cased_256_cased_256_5.0e-05/checkpoint-best',
+        'data/temp/tuned_c',
+    )
+    visualize('data/temp/tuned_c')
 
 
 if __name__ == '__main__':

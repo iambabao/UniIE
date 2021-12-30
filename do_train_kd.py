@@ -16,6 +16,7 @@ import json
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
+from collections import OrderedDict
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from transformers import (
@@ -27,7 +28,7 @@ AdamW,
 get_linear_schedule_with_warmup,
 )
 
-from src.data_processor import DataProcessor
+from src.data_processor import DataProcessorKD as DataProcessor
 from src.models import *
 from src.utils import (
 init_logger,
@@ -44,6 +45,26 @@ MODEL_MAPPING = {
     "variant-b": VariantB,
     "variant-c": VariantC,
 }
+
+
+def convert_batch(args, batch, task2id):
+    outputs = OrderedDict()
+
+    outputs["task_id"] = torch.tensor([task2id[f.task] for f in batch], dtype=torch.long).to(args.device)
+    outputs["input_ids"] = torch.tensor([f.input_ids for f in batch], dtype=torch.long).to(args.device)
+    outputs["attention_mask"] = torch.tensor([f.attention_mask for f in batch], dtype=torch.long).to(args.device)
+    # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
+    if args.model_type in ["bert", "xlnet", "albert"]:
+        outputs["token_type_ids"] = torch.tensor([f.token_type_ids for f in batch], dtype=torch.long).to(args.device)
+    outputs["token_mapping"] = torch.tensor([f.token_mapping for f in batch], dtype=torch.long).to(args.device)
+    outputs["length"] = torch.tensor([f.length for f in batch], dtype=torch.long).to(args.device)
+    outputs["start_labels"] = torch.tensor([f.start_labels for f in batch], dtype=torch.long).to(args.device)
+    outputs["end_labels"] = torch.tensor([f.end_labels for f in batch], dtype=torch.long).to(args.device)
+    outputs["labels"] = torch.tensor([f.labels.todense().tolist() for f in batch], dtype=torch.long).to(args.device)
+    if hasattr(batch[0], "prior") and batch[0].prior is not None:
+        outputs["prior"] = [torch.tensor(f.prior, dtype=torch.float).to(args.device) for f in batch]
+
+    return outputs
 
 
 def save_checkpoint(output_dir, model, tokenizer, args):
@@ -63,7 +84,9 @@ def train(args, data_processor, model, tokenizer, role):
     if args.local_rank == 0:
         torch.distributed.barrier()
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    train_dataloader = DataLoader(
+        train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, collate_fn=lambda x: x,
+    )
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -123,22 +146,10 @@ def train(args, data_processor, model, tokenizer, role):
         for step, batch in enumerate(epoch_iterator):
             model.train()
 
-            inputs = {
-                "task_id": batch[0].to(args.device),
-                "input_ids": batch[1].to(args.device),
-                "attention_mask": batch[2].to(args.device),
-                "token_mapping": batch[4].to(args.device),
-                "length": batch[5].to(args.device),
-                "start_labels": batch[-3].to(args.device),
-                "end_labels": batch[-2].to(args.device),
-                "labels": batch[-1].to_dense().to(args.device),
-            }
-            # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
-            if args.model_type in ["bert", "xlnet", "albert"]:
-                inputs["token_type_ids"] = batch[3].to(args.device)
-
+            inputs = convert_batch(args, batch, data_processor.task2id)
             outputs = model(inputs)
             loss = outputs["loss"]
+            start_loss, end_loss, kd_loss = outputs["start_loss"], outputs["end_loss"], outputs["kd_loss"]
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
@@ -147,7 +158,9 @@ def train(args, data_processor, model, tokenizer, role):
             loss.backward()
 
             training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            description = "Global step: {:>6d}, Loss: {:>.4f} (start: {:>.4f}, end: {:>.4f}, kd: {:>.4f})".format(
+                global_step, loss.item(), start_loss.item(), end_loss.item(), kd_loss.item()
+            )
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -161,7 +174,14 @@ def train(args, data_processor, model, tokenizer, role):
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         logger.info(description)
                         if args.evaluate_during_training:
-                            results = evaluate(args, data_processor, model, tokenizer, "valid", str(global_step))
+                            results = evaluate(
+                                args,
+                                data_processor,
+                                model,
+                                tokenizer,
+                                role="valid",
+                                prefix=str(global_step)
+                            )
                             current_score, best_score = results["score"], max(best_score, results["score"])
                             if current_score >= best_score:
                                 early_stop_flag = 0
@@ -201,7 +221,9 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     args.eval_batch_size = args.per_device_eval_batch_size * max(1, args.n_gpu)
     examples, dataset = data_processor.load_and_cache_data(tokenizer, role, args.suffix)
     eval_sampler = SequentialSampler(dataset)
-    eval_dataloader = DataLoader(dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataloader = DataLoader(
+        dataset, sampler=eval_sampler, batch_size=args.eval_batch_size, collate_fn=lambda x: x,
+    )
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
@@ -212,20 +234,7 @@ def evaluate(args, data_processor, model, tokenizer, role, prefix=""):
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
         with torch.no_grad():
-            inputs = {
-                "task_id": batch[0].to(args.device),
-                "input_ids": batch[1].to(args.device),
-                "attention_mask": batch[2].to(args.device),
-                "token_mapping": batch[4].to(args.device),
-                "length": batch[5].to(args.device),
-                "start_labels": batch[-3].to(args.device),
-                "end_labels": batch[-2].to(args.device),
-                "labels": batch[-1].to_dense().to(args.device),
-            }
-            # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use token_type_ids
-            if args.model_type in ["bert", "xlnet", "albert"]:
-                inputs["token_type_ids"] = batch[3].to(args.device)
-
+            inputs = convert_batch(args, batch, data_processor.task2id)
             outputs = model(inputs)
 
             logits = outputs["task_logits"]
@@ -394,7 +403,7 @@ def main():
         args.n_gpu = 1
     args.device = device
 
-    # Setup logger
+    # Setup log dir
     if args.local_rank in [-1, 0] and args.log_file is None and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         args.log_file = os.path.join(
@@ -425,7 +434,7 @@ def main():
     # Parse tasks
     args.tasks = sorted(args.tasks.split(","))
 
-    # Load processor, config and tokenizer
+    # Load config, tokenizer and pretrained model
     data_processor = DataProcessor(
         args.tasks,
         args.model_type,
@@ -513,7 +522,7 @@ def main():
 
             # Reload the model
             try:
-                logger.info("Loading model from {}".format(checkpoint))
+                logger.info("Reload model from {}".format(checkpoint))
                 config = AutoConfig.from_pretrained(checkpoint)
                 model = MODEL_MAPPING[args.model_type].from_pretrained(checkpoint, config=config)
                 model.to(args.device)
