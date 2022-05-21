@@ -12,16 +12,12 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
-from src.models.modules import DiffLinear
-from src.models.utils import build_token_embedding, attentive_select
+from src.models.utils import build_token_embedding
 
 
-class VariantC(BertPreTrainedModel):
-
+class VariantMulti(BertPreTrainedModel):
     """
-    Model for multi-task learning with:
-        - attention mechanism
-        - diff-parameter
+    Model for multi-task learning
     """
 
     def __init__(self, config):
@@ -44,10 +40,12 @@ class VariantC(BertPreTrainedModel):
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
         )
-        self.diff_start_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
-        self.diff_end_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
-        self.start_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
-        self.end_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
+        self.task_start_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        ])
+        self.task_end_layers = nn.ModuleList([
+            nn.Linear(config.hidden_size, config.task_hidden_size) for _ in range(config.num_tasks)
+        ])
         self.output_start_layer = nn.Linear(config.task_hidden_size, 2)
         self.output_end_layer = nn.Linear(config.task_hidden_size, 2)
         self.Us = nn.ParameterList([
@@ -58,8 +56,6 @@ class VariantC(BertPreTrainedModel):
         self.loss_function = nn.CrossEntropyLoss()
 
         # initialize manually added parameters
-        nn.init.xavier_normal_(self.start_u)
-        nn.init.xavier_normal_(self.end_u)
         for _ in self.Us:
             nn.init.xavier_normal_(_)
 
@@ -97,14 +93,12 @@ class VariantC(BertPreTrainedModel):
         token_embedding = build_token_embedding(sequence_output, token_mapping)
 
         start_embedding = self.unified_start_layer(token_embedding)
-        start_embedding = [self.diff_start_layer(start_embedding, _) for _ in range(self.num_tasks)]
-        start_embedding = torch.stack(start_embedding, dim=1)
-        start_embedding = attentive_select(start_embedding, self.start_u, task_id)
+        start_embedding = [self.task_start_layers[t_id](start_embedding[b_id]) for b_id, t_id in enumerate(task_id)]
+        start_embedding = torch.stack(start_embedding, dim=0)
 
         end_embedding = self.unified_end_layer(token_embedding)
-        end_embedding = [self.diff_end_layer(end_embedding, _) for _ in range(self.num_tasks)]
-        end_embedding = torch.stack(end_embedding, dim=1)
-        end_embedding = attentive_select(end_embedding, self.end_u, task_id)
+        end_embedding = [self.task_end_layers[t_id](end_embedding[b_id]) for b_id, t_id in enumerate(task_id)]
+        end_embedding = torch.stack(end_embedding, dim=0)
 
         start_logits = self.output_start_layer(start_embedding)
         end_logits = self.output_end_layer(end_embedding)

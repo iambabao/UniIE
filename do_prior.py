@@ -25,8 +25,7 @@ from src.utils import init_logger
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
-    "variant-a": VariantA,
-    "variant-b": VariantB,
+    "variant-single": VariantSingle,
 }
 
 
@@ -77,57 +76,24 @@ def main():
     parser.add_argument("--role", required=True, type=str, help="")
 
     # Model hyper parameters
-    parser.add_argument("--model_type", required=True, type=str, help="Model type")
-    parser.add_argument(
-        "--model_name_or_path",
-        required=True,
-        type=str,
-        help="Path to model identifier from huggingface.co/models",
-    )
-    parser.add_argument(
-        "--pretrained_model",
-        default=None,
-        type=str,
-        help="Path to pretrained model",
-    )
-    parser.add_argument(
-        "--max_seq_length",
-        default=128,
-        type=int,
-        help="The maximum total input sequence length after WordPiece tokenization. Sequences "
-        "longer than this will be truncated, and sequences shorter than this will be padded.",
-    )
-    parser.add_argument("--max_num_tokens", default=128, type=int, help="The maximum total input tokens.")
-    parser.add_argument(
-        "--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model."
-    )
-    parser.add_argument("--task_hidden_size", default=128, type=int, help="The hidden size of task specific layer.")
+    parser.add_argument("--model_type", required=True, type=str, help="")
+    parser.add_argument("--model_name_or_path", required=True, type=str, help="")
+    parser.add_argument("--pretrained_model", default=None, type=str, help="")
+    parser.add_argument("--max_seq_length", default=128, type=int, help="")
+    parser.add_argument("--max_num_tokens", default=128, type=int, help="")
+    parser.add_argument("--do_lower_case", action="store_true", help="")
+    parser.add_argument("--task_hidden_size", default=128, type=int, help="")
 
     # Directory parameters
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        required=True,
-        help="The input data dir. Should contain the .tsv files (or other data files) for the task.",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        required=True,
-        help="The output directory where the model checkpoints and predictions will be written.",
-    )
-    parser.add_argument(
-        "--cache_dir",
-        default="",
-        type=str,
-        help="Where do you want to store the pre-trained models downloaded from s3",
-    )
+    parser.add_argument("--data_dir", type=str, required=True, help="")
+    parser.add_argument("--output_dir", type=str, required=True, help="")
+    parser.add_argument("--cache_dir", default="", type=str, help="")
 
     # Running parameters
-    parser.add_argument("--per_device_batch_size", default=8, type=int, help="Batch size per GPU/CPU.")
+    parser.add_argument("--per_device_batch_size", default=8, type=int, help="")
 
     # Other parameters
-    parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
+    parser.add_argument("--no_cuda", action="store_true", help="")
     args = parser.parse_args()
 
     # Setup CUDA, GPU training

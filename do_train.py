@@ -40,9 +40,12 @@ compute_metrics,
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
+    "variant-single": VariantSingle,
+    "variant-multi": VariantMulti,
     "variant-a": VariantA,
     "variant-b": VariantB,
     "variant-c": VariantC,
+    "variant-d": VariantD,
 }
 
 
@@ -138,16 +141,29 @@ def train(args, data_processor, model, tokenizer, role):
                 inputs["token_type_ids"] = batch[3].to(args.device)
 
             outputs = model(inputs)
-            loss = outputs["loss"]
+            loss, position_loss, task_loss, consistency_loss = (
+                outputs["loss"], outputs["position_loss"], outputs["task_loss"], outputs.get("consistency_loss", None)
+            )
 
             if args.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
+                # mean() to average on multi-gpu parallel (not distributed) training
+                loss = loss.mean()
+                position_loss = position_loss.mean()
+                task_loss = task_loss.mean()
+                if consistency_loss is not None:
+                    consistency_loss = consistency_loss.mean()
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
             loss.backward()
 
             training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f}".format(global_step, loss.item())
+            description = "Step: {:>6d} Loss: {:>.4f} (position: {:>.4f} task: {:>.4f} consistency: {:>.4f})".format(
+                global_step,
+                loss.item(),
+                position_loss.item(),
+                task_loss.item(),
+                0 if consistency_loss is None else consistency_loss.item(),
+            )
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)

@@ -94,6 +94,12 @@ def attentive_select(features, u, task_id):
     return torch.stack(outputs, dim=0)
 
 
+def consistency_loss_function(logits, target):
+    x = torch.log_softmax(logits, dim=-1)
+    y = torch.softmax(target, dim=-1)
+    return -torch.mean(torch.sum((x * y), dim=-1))
+
+
 def ce_loss(logits, labels, mask=None):
     """
 

@@ -153,28 +153,28 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, max_num_to
                 reverse = True
                 head_start, head_end, tail_start, tail_end = tail_start, tail_end, head_start, head_end
             # TODO: single edge
-            if labels[head_start][tail_start] == 0:
-                if not reverse:
-                    labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
-                else:
-                    labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
-            else:
-                conflict_counter += 1
-                logger.warning("({}) Edge {} conflict and will be skipped.".format(ex_index, edge))
-            # TODO: double edge
-            # if labels[head_start][tail_start] == 0 and labels[head_end - 1][tail_end - 1] == 0:
+            # if labels[head_start][tail_start] == 0:
             #     if not reverse:
             #         labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
-            #         labels[head_end - 1][tail_end - 1] = label2id["edge: {}".format(edge["type"])]
             #     else:
             #         labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
-            #         labels[head_end - 1][tail_end - 1] = label2id["reverse edge: {}".format(edge["type"])]
-            # elif labels[head_start][tail_start] != 0:
-            #     conflict_counter += 1
-            #     logger.warning("({}) Edge {} conflict at start and will be skipped.".format(ex_index, edge))
             # else:
             #     conflict_counter += 1
-            #     logger.warning("({}) Edge {} conflict at end and will be skipped.".format(ex_index, edge))
+            #     logger.warning("({}) Edge {} conflict and will be skipped.".format(ex_index, edge))
+            # TODO: double edge
+            if labels[head_start][tail_start] == 0 and labels[head_end - 1][tail_end - 1] == 0:
+                if not reverse:
+                    labels[head_start][tail_start] = label2id["edge: {}".format(edge["type"])]
+                    labels[head_end - 1][tail_end - 1] = label2id["edge: {}".format(edge["type"])]
+                else:
+                    labels[head_start][tail_start] = label2id["reverse edge: {}".format(edge["type"])]
+                    labels[head_end - 1][tail_end - 1] = label2id["reverse edge: {}".format(edge["type"])]
+            elif labels[head_start][tail_start] != 0:
+                conflict_counter += 1
+                logger.warning("({}) Edge {} conflict at start and will be skipped.".format(ex_index, edge))
+            else:
+                conflict_counter += 1
+                logger.warning("({}) Edge {} conflict at end and will be skipped.".format(ex_index, edge))
 
         del encoded["offset_mapping"]
         encoded["token_mapping"] = token_mapping
@@ -296,9 +296,9 @@ class DataProcessorKD:
                 torch.save((features, u, v, w), cached_features)
 
             if role == "train" and self.max_seq_length == 256 and self.max_num_tokens == 256:
-                for index, line in tqdm(
-                    enumerate(read_file("data/prior/{}/prior_train_256_256.txt".format(task))), desc="Loading prior",
-                ):
+                for index, line in tqdm(enumerate(
+                        read_file("data/prior/{}/prior_train_256_256.txt".format(task))
+                ), desc="Loading prior"):
                     prior = eval(line)
                     features[index].prior = prior
             all_features.extend(features)

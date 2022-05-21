@@ -12,62 +12,49 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertPreTrainedModel
 
-from src.models.modules import DiffLinear
-from src.models.utils import build_token_embedding, attentive_select
+from src.models.utils import build_token_embedding
 
 
-class VariantC(BertPreTrainedModel):
-
+class VariantSingle(BertPreTrainedModel):
     """
-    Model for multi-task learning with:
-        - attention mechanism
-        - diff-parameter
+    Model for single task learning
     """
 
     def __init__(self, config):
         super().__init__(config)
 
-        self.num_tasks = config.num_tasks
-        self.task2labels = config.task2labels
+        assert config.num_tasks == 1
+        self.num_labels = len(list(config.task2labels.values())[0]) + 1
         self.task_hidden_size = config.task_hidden_size
 
         self.bert = BertModel(config, add_pooling_layer=False)
-        self.unified_start_layer = nn.Sequential(
+        self.start_layer = nn.Sequential(
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
+            nn.Linear(config.hidden_size, config.task_hidden_size),
         )
-        self.unified_end_layer = nn.Sequential(
+        self.end_layer = nn.Sequential(
             nn.Linear(config.hidden_size, config.hidden_size),
             nn.LayerNorm(config.hidden_size),
             nn.GELU(),
             nn.Dropout(config.hidden_dropout_prob * 4),
+            nn.Linear(config.hidden_size, config.task_hidden_size),
         )
-        self.diff_start_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
-        self.diff_end_layer = DiffLinear(config.hidden_size, config.task_hidden_size, num_diffs=config.num_tasks)
-        self.start_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
-        self.end_u = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size))
         self.output_start_layer = nn.Linear(config.task_hidden_size, 2)
         self.output_end_layer = nn.Linear(config.task_hidden_size, 2)
-        self.Us = nn.ParameterList([
-            nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size, len(_) + 1))
-            for _ in config.task2labels.values()
-        ])
+        self.U = nn.Parameter(torch.Tensor(config.task_hidden_size, config.task_hidden_size, self.num_labels))
         self.loss_dropout = nn.Dropout(config.hidden_dropout_prob * 2)
         self.loss_function = nn.CrossEntropyLoss()
 
         # initialize manually added parameters
-        nn.init.xavier_normal_(self.start_u)
-        nn.init.xavier_normal_(self.end_u)
-        for _ in self.Us:
-            nn.init.xavier_normal_(_)
+        nn.init.xavier_normal_(self.U)
 
         # initialize with HuggingFace API
         self.init_weights()
 
     def forward(self, batch_inputs):
-        task_id = batch_inputs.get("task_id")
         input_ids = batch_inputs.get("input_ids")
         attention_mask = batch_inputs.get("attention_mask")
         token_type_ids = batch_inputs.get("token_type_ids")
@@ -76,7 +63,6 @@ class VariantC(BertPreTrainedModel):
         start_labels = batch_inputs.get("start_labels")
         end_labels = batch_inputs.get("end_labels")
         labels = batch_inputs.get("labels")
-        prior = batch_inputs.get("prior")
 
         batch_size = token_mapping.shape[0]
         max_num_tokens = token_mapping.shape[1]
@@ -96,22 +82,12 @@ class VariantC(BertPreTrainedModel):
         # (batch_size, max_num_tokens, hidden_size)
         token_embedding = build_token_embedding(sequence_output, token_mapping)
 
-        start_embedding = self.unified_start_layer(token_embedding)
-        start_embedding = [self.diff_start_layer(start_embedding, _) for _ in range(self.num_tasks)]
-        start_embedding = torch.stack(start_embedding, dim=1)
-        start_embedding = attentive_select(start_embedding, self.start_u, task_id)
-
-        end_embedding = self.unified_end_layer(token_embedding)
-        end_embedding = [self.diff_end_layer(end_embedding, _) for _ in range(self.num_tasks)]
-        end_embedding = torch.stack(end_embedding, dim=1)
-        end_embedding = attentive_select(end_embedding, self.end_u, task_id)
+        start_embedding = self.start_layer(token_embedding)
+        end_embedding = self.end_layer(token_embedding)
 
         start_logits = self.output_start_layer(start_embedding)
         end_logits = self.output_end_layer(end_embedding)
-        task_logits = [
-            torch.einsum("im,mnk,jn->ijk", start_embedding[b_id], self.Us[t_id], end_embedding[b_id])
-            for b_id, t_id in enumerate(task_id)
-        ]
+        task_logits = torch.einsum("bim,mnk,bjn->bijk", start_embedding, self.U, end_embedding)
 
         outputs["position_mask"] = position_mask
         outputs["token_embedding"] = token_embedding
@@ -136,16 +112,6 @@ class VariantC(BertPreTrainedModel):
             task_loss = sum(task_loss) / len(task_loss)
 
             loss = position_loss + task_loss
-            if prior is not None:
-                kd_function = nn.KLDivLoss(reduction="sum")
-                kd_loss = [
-                    kd_function(torch.log_softmax(task_logits[b_id][position_mask[b_id]], dim=-1), prior[b_id])
-                    for b_id in range(batch_size)
-                ]
-                kd_loss = sum(kd_loss) / len(kd_loss)
-                loss = loss + kd_loss
-                outputs["kd_loss"] = kd_loss
-
             outputs["position_loss"] = position_loss
             outputs["task_loss"] = task_loss
             outputs["loss"] = loss

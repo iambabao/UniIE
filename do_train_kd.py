@@ -41,9 +41,11 @@ compute_metrics,
 
 logger = logging.getLogger(__name__)
 MODEL_MAPPING = {
+    "variant-multi": VariantMulti,
     "variant-a": VariantA,
     "variant-b": VariantB,
     "variant-c": VariantC,
+    "variant-d": VariantD,
 }
 
 
@@ -148,8 +150,11 @@ def train(args, data_processor, model, tokenizer, role):
 
             inputs = convert_batch(args, batch, data_processor.task2id)
             outputs = model(inputs)
-            loss = outputs["loss"]
-            start_loss, end_loss, kd_loss = outputs["start_loss"], outputs["end_loss"], outputs["kd_loss"]
+            loss, position_loss, task_loss, consistency_loss, kd_loss = (
+                outputs["loss"], outputs["position_loss"], outputs["task_loss"],
+                outputs.get("consistency_loss", None),
+                outputs.get("kd_loss", None),
+            )
 
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel (not distributed) training
@@ -158,8 +163,13 @@ def train(args, data_processor, model, tokenizer, role):
             loss.backward()
 
             training_loss += loss.item()
-            description = "Global step: {:>6d}, Loss: {:>.4f} (start: {:>.4f}, end: {:>.4f}, kd: {:>.4f})".format(
-                global_step, loss.item(), start_loss.item(), end_loss.item(), kd_loss.item()
+            description = "Step: {:>6d} Loss: {:>.4f} (position: {:>.4f} task: {:>.4f} consistency: {:>.4f}, kd: {:>.4f})".format(
+                global_step,
+                loss.item(),
+                position_loss.item(),
+                task_loss.item(),
+                0 if consistency_loss is None else consistency_loss.item(),
+                0 if kd_loss is None else kd_loss.item(),
             )
             epoch_iterator.set_description(description)
             if (step + 1) % args.gradient_accumulation_steps == 0:

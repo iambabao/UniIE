@@ -11,8 +11,7 @@
 import json
 import random
 import logging
-import numpy as np
-from collections import defaultdict, Counter
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -170,29 +169,12 @@ def generate_outputs(predicted, task_id, length, id2task, task2schema):
                     nodes.append(node)
 
         # TODO: single edge
-        edges = []
-        for head in nodes:
-            for tail in nodes:
-                if head == tail: continue
-                head_start, tail_start = head["start"], tail["start"]
-                if head_start > tail_start: continue
-
-                predicted = flags[head_start][tail_start]
-                if num_node_types < predicted:
-                    if (predicted - num_node_types) % 2 == 1:
-                        edges.append({"head": head, "tail": tail, "type": id2label[predicted][6:]})
-                    else:  # reverse edges
-                        edges.append({"head": tail, "tail": head, "type": id2label[predicted][14:]})
-
-        # TODO:double edge
         # edges = []
         # for head in nodes:
         #     for tail in nodes:
         #         if head == tail: continue
-        #         head_start, head_end = head["start"], head["end"]
-        #         tail_start, tail_end = tail["start"], tail["end"]
+        #         head_start, tail_start = head["start"], tail["start"]
         #         if head_start > tail_start: continue
-        #         if flags[head_start][tail_start] != flags[head_end - 1][tail_end - 1]: continue
         #
         #         predicted = flags[head_start][tail_start]
         #         if num_node_types < predicted:
@@ -200,6 +182,23 @@ def generate_outputs(predicted, task_id, length, id2task, task2schema):
         #                 edges.append({"head": head, "tail": tail, "type": id2label[predicted][6:]})
         #             else:  # reverse edges
         #                 edges.append({"head": tail, "tail": head, "type": id2label[predicted][14:]})
+
+        # TODO:double edge
+        edges = []
+        for head in nodes:
+            for tail in nodes:
+                if head == tail: continue
+                head_start, head_end = head["start"], head["end"]
+                tail_start, tail_end = tail["start"], tail["end"]
+                if head_start > tail_start: continue
+                if flags[head_start][tail_start] != flags[head_end - 1][tail_end - 1]: continue
+
+                predicted = flags[head_start][tail_start]
+                if num_node_types < predicted:
+                    if (predicted - num_node_types) % 2 == 1:
+                        edges.append({"head": head, "tail": tail, "type": id2label[predicted][6:]})
+                    else:  # reverse edges
+                        edges.append({"head": tail, "tail": head, "type": id2label[predicted][14:]})
 
         outputs.append({"predicted_nodes": nodes, "predicted_edges": edges})
     return outputs
